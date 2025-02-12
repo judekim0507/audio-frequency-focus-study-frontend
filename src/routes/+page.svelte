@@ -53,16 +53,18 @@
   let calibrationInterval: number | null = null;
 
   function updateFromEEGData(data: any) {
-    console.log('Received data:', data);
+    console.log('Processing EEG data:', data);
     
     if (data.connected === false) {
+      console.log('EEG not connected:', data.message);
       isConnected = false;
       statusMessage = data.message || "EEG stream not connected";
       return;
     }
 
+    console.log('EEG connected, focus level:', data.focus_level);
     isConnected = true;
-    statusMessage = "Connected to Muse 2";
+    statusMessage = "Connected to Muse";  // Changed from "Connected to Muse 2"
     currentFocusLevel.set(data.focus_level);
 
     if (isPlaying) {
@@ -77,22 +79,48 @@
   }
 
   function connectWebSocket() {
+    console.log('Attempting to connect to WebSocket...');
+    
     ws = new WebSocket('ws://localhost:8000/ws');
     
+    // Add heartbeat interval
+    let heartbeatInterval: number;
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected successfully');
+      // Start heartbeat
+      heartbeatInterval = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 1000); // Send ping every second
+    };
+    
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      
-      if (data.type === 'calibration_complete') {
-        stopCalibration();
-        // Handle calibration results
-        console.log('Calibration complete:', data);
-      } else {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Raw WebSocket data received:', event.data);
+        
+        // Skip processing pong messages
+        if (data.type === 'pong') {
+          return;
+        }
+        
+        // For all other messages, update the UI
+        if (data.focus_level !== undefined) {
+          console.log('Focus level update:', data.focus_level);
+          currentFocusLevel.set(data.focus_level);
+        }
+        
         updateFromEEGData(data);
+      } catch (error) {
+        console.error('Error parsing WebSocket data:', error);
       }
     };
 
     ws.onclose = () => {
       console.log('WebSocket connection closed');
+      clearInterval(heartbeatInterval);
       isConnected = false;
       statusMessage = "Connection lost. Reconnecting...";
       setTimeout(connectWebSocket, 1000);
@@ -101,7 +129,7 @@
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
       isConnected = false;
-      statusMessage = "Connection error";
+      statusMessage = "Connection error. Check if backend is running on correct port";
     };
   }
 
